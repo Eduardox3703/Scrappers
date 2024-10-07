@@ -1,3 +1,4 @@
+import csv
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
@@ -73,6 +74,19 @@ def get_user_info(driver, target_profile):
         print(f"Error al obtener la información del usuario: {e}")
         return None, None, None
 
+def save_to_csv(data, filename="user_data.csv"):
+    header = ["Username", "Post Count", "User Link"]
+    try:
+        with open(filename, mode='a', newline='') as file:
+            writer = csv.writer(file)
+            file.seek(0, 2)
+            if file.tell() == 0:
+                writer.writerow(header)  # Escribir encabezado si el archivo está vacío
+            writer.writerow(data)
+        print(f"Datos guardados en {filename}")
+    except Exception as e:
+        print(f"Error al guardar en el archivo CSV: {e}")
+
 def main():
     target_profile = "carinleonoficial"
     username = "rbrtmtz43"
@@ -81,11 +95,12 @@ def main():
     driver = setup_driver()
     try:
         if login(driver, username, password):
-            username, post_count, user_link = get_user_info(driver, target_profile)
-            if username and post_count and user_link:
-                print(f"Username: {username}")
-                print(f"Número de posts: {post_count}")
-                print(f"Link del usuario: {user_link}")
+            user_data = get_user_info(driver, target_profile)
+            if all(user_data):
+                print(f"Username: {user_data[0]}")
+                print(f"Número de posts: {user_data[1]}")
+                print(f"Link del usuario: {user_data[2]}")
+                save_to_csv(user_data)
     except Exception as e:
         print(f"Error durante la ejecución: {e}")
     finally:
