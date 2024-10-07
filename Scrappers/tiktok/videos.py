@@ -4,17 +4,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import time
-import queue
-import threading
 import bt
-
-# Cola thread-safe para almacenar resultados
-results_queue = queue.Queue()
 
 def setup_driver():
     options = Options()
@@ -35,23 +29,22 @@ def wait_and_find_element(driver, by, value, timeout=10):
     except TimeoutException:
         return None
 
-def is_video(driver):
-    try:
-        # Buscar el elemento de video
-        video_element = driver.find_element(By.TAG_NAME, 'video')
-        return True
-    except NoSuchElementException:
-        return False
-
 def get_video_duration(driver):
     try:
+        # Esperar y encontrar el elemento de duración usando la clase específica
         duration_element = WebDriverWait(driver, 5).until(
             EC.presence_of_element_located((By.CLASS_NAME, "css-1cuqcrm-DivSeekBarTimeContainer"))
         )
+        
+        # El texto será algo como "00:01 / 00:16"
         duration_text = duration_element.text
+        
+        # Extraer la duración total (la parte después del '/')
         total_duration = duration_text.split('/')[-1].strip()
+        
         return total_duration
-    except Exception:
+    except Exception as e:
+        print(f"Error al obtener la duración: {e}")
         return "N/A"
 
 def scroll_to_load_all_videos(driver):
@@ -70,95 +63,88 @@ def scroll_to_load_all_videos(driver):
         posts = driver.find_elements(By.XPATH, '//div[@data-e2e="user-post-item"]')
         print(f"Videos cargados: {len(posts)}")
 
-def process_video(video_link, index, total_videos):
+def get_videos_info(target_profile):
     driver = setup_driver()
-    try:
-        print(f"Procesando video {index}/{total_videos}...")
-        driver.get(video_link)
-        
-        WebDriverWait(driver, 10).until(
-            EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "DivVideoInfoContainer")]'))
-        )
-        
-        is_video_content = is_video(driver)
-        video_duration = get_video_duration(driver) if is_video_content else "N/A"
-        
-        video_data = {
-            "Número de Video": index,
-            "URL del Video": video_link,
-            "Es Video": is_video_content,
-            "Duración": video_duration
-        }
-        
-        elements_to_find = {
-            "Título": '//div[contains(@class, "DivVideoInfoContainer")]//span',
-            "Likes": '//strong[@data-e2e="like-count"]',
-            "Comentarios": '//strong[@data-e2e="comment-count"]',
-            "Compartidos": '//strong[@data-e2e="share-count"]',
-            #"Música": '//h4[contains(@class, "music-title-link")]',
-            #"Descripción": '//div[contains(@class, "DivVideoDescContainer")]',
-            #"Hashtags": '//a[contains(@class, "video-tag")]',
-            #"Fecha de Publicación": '//span[contains(@class, "DivTimeTag")]'
-        }
-        
-        for key, xpath in elements_to_find.items():
-            try:
-                if key == "Hashtags":
-                    elements = driver.find_elements(By.XPATH, xpath)
-                    video_data[key] = ", ".join([el.text for el in elements]) if elements else "N/A"
-                else:
-                    element = wait_and_find_element(driver, By.XPATH, xpath)
-                    video_data[key] = element.text if element else "N/A"
-            except Exception:
-                video_data[key] = "N/A"
-        
-        results_queue.put(video_data)
-        return True
-    except Exception as e:
-        print(f"Error al procesar el video {index}: {e}")
-        return False
-    finally:
-        driver.quit()
-
-def get_videos_info(target_profile, max_workers=4):
-    main_driver = setup_driver()
     website = f"https://www.tiktok.com/@{target_profile}"
-    main_driver.get(website)
+    driver.get(website)
     
     print("Si aparece un CAPTCHA, resuélvelo manualmente.")
     input("Presiona Enter una vez que la página haya cargado completamente...")
 
+    videos_data = []
+
     try:
         print("Cargando todos los videos...")
-        scroll_to_load_all_videos(main_driver)
+        scroll_to_load_all_videos(driver)
         
-        video_links = [element.get_attribute('href') for element in 
-                       main_driver.find_elements(By.XPATH, '//div[@data-e2e="user-post-item"]//a')]
-        total_videos = len(video_links)
+        posts = driver.find_elements(By.XPATH, '//div[@data-e2e="user-post-item"]')
+        total_videos = len(posts)
         print(f"Total de videos encontrados: {total_videos}")
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = [executor.submit(process_video, link, i+1, total_videos) 
-                      for i, link in enumerate(video_links)]
-            
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as e:
-                    print(f"Error en thread: {e}")
+        for index, post in enumerate(posts, 1):
+            try:
+                print(f"Procesando video {index}/{total_videos}...")
+                video_link = post.find_element(By.TAG_NAME, 'a').get_attribute('href')
+                
+                # Abrir video en nueva pestaña
+                driver.execute_script("window.open('');")
+                driver.switch_to.window(driver.window_handles[-1])
+                driver.get(video_link)
+                
+                # Esperar a que cargue la información del video
+                WebDriverWait(driver, 10).until(
+                    EC.presence_of_element_located((By.XPATH, '//div[contains(@class, "DivVideoInfoContainer")]'))
+                )
+                
+                # Obtener la duración del video usando la nueva función
+                video_duration = get_video_duration(driver)
+                
+                video_data = {
+                    "Número de Video": index,
+                    "URL del Video": video_link,
+                    "Duración": video_duration
+                }
+                
+                # Elementos a buscar y extraer
+                elements_to_find = {
+                    "Título": '//div[contains(@class, "DivVideoInfoContainer")]//span',
+                    "Likes": '//strong[@data-e2e="like-count"]',
+                    "Comentarios": '//strong[@data-e2e="comment-count"]',
+                    "Compartidos": '//strong[@data-e2e="share-count"]',
+                    ##"Música": '//h4[contains(@class, "music-title-link")]',
+                    "Descripción": '//div[contains(@class, "DivVideoDescContainer")]',
+                    "Hashtags": '//a[contains(@class, "video-tag")]',
+                    "Fecha de Publicación": '//span[contains(@class, "DivTimeTag")]'
+                }
+                
+                for key, xpath in elements_to_find.items():
+                    try:
+                        if key == "Hashtags":
+                            elements = driver.find_elements(By.XPATH, xpath)
+                            video_data[key] = ", ".join([el.text for el in elements]) if elements else "N/A"
+                        else:
+                            element = wait_and_find_element(driver, By.XPATH, xpath)
+                            video_data[key] = element.text if element else "N/A"
+                    except Exception as e:
+                        video_data[key] = "N/A"
+                        print(f"Error al obtener {key}: {str(e)}")
+                
+                videos_data.append(video_data)
+                
+                driver.close()
+                driver.switch_to.window(driver.window_handles[0])
+                
+            except Exception as e:
+                print(f"Error al procesar el video {index}: {e}")
+                if len(driver.window_handles) > 1:
+                    driver.close()
+                    driver.switch_to.window(driver.window_handles[0])
 
     except Exception as e:
         print(f"Error general: {e}")
     finally:
-        main_driver.quit()
+        driver.quit()
     
-    # Recolectar resultados de la cola
-    videos_data = []
-    while not results_queue.empty():
-        videos_data.append(results_queue.get())
-    
-    # Ordenar por número de video
-    videos_data.sort(key=lambda x: x["Número de Video"])
     return videos_data
 
 def save_to_csv(videos_data, filename):
@@ -166,9 +152,9 @@ def save_to_csv(videos_data, filename):
         print("No hay datos para guardar.")
         return
     
-    fieldnames = ["Número de Video", "Es Video", "Título", "Duración", "Likes", 
-                  "Comentarios", "Compartidos", "Música", "Descripción", 
-                  "Hashtags", "Fecha de Publicación", "URL del Video"]
+    fieldnames = ["Número de Video", "Título", "Duración", "Likes", "Comentarios", 
+                  "Compartidos", "Música", "Descripción", "Hashtags", 
+                  "Fecha de Publicación", "URL del Video"]
     
     with open(f'{filename}.csv', 'w', newline='', encoding='utf-8') as file:
         writer = csv.DictWriter(file, fieldnames=fieldnames)
@@ -178,10 +164,9 @@ def save_to_csv(videos_data, filename):
 if __name__ == "__main__":
     target_profile = input('Introduce la cuenta de TikTok a la que quieres acceder: ')
     filename = input('Nombra tu archivo .csv para la información de los videos: ')
-    num_workers = int(input('Introduce el número de workers para el procesamiento paralelo (recomendado 4-8): '))
     
     print("Iniciando la extracción de datos...")
-    videos_data = get_videos_info(target_profile, max_workers=num_workers)
+    videos_data = get_videos_info(target_profile)
     
     if videos_data:
         save_to_csv(videos_data, filename)
@@ -190,4 +175,4 @@ if __name__ == "__main__":
     else:
         print("No se pudo obtener datos. Verifica la conexión o el nombre de usuario.")
 
-    #bt.main()
+    bt.main()
