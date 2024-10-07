@@ -74,7 +74,7 @@ def save_to_csv(data, filename="followers_data.csv"):
         print(f"Error al guardar en el archivo CSV: {e}")
 
 if __name__ == "__main__":
-    username = "carinleonoficial"
+    username = input("Ingresar el Nombre de Usuario a buscar")
     
     max_attempts = 3
     for attempt in range(max_attempts):
